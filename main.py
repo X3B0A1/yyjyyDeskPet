@@ -278,18 +278,27 @@ class PetApp:
         self.char_name = name
         self.crawl_frames = load_frames(folder, "crawl")
         self.scare_frames = load_frames(folder, "scare")
+        n_c = len(self.crawl_frames)
         all_frames = self.crawl_frames + self.scare_frames
-        base_w = max(f.width for f in all_frames)
-        base_h = max(f.height for f in all_frames)
+        ref = max(max(f.width, f.height) for f in all_frames)
+        resized = []
+        for f in all_frames:
+            if f.width >= f.height:
+                nw, nh = ref, max(1, round(f.height * ref / f.width))
+            else:
+                nw, nh = max(1, round(f.width * ref / f.height)), ref
+            resized.append(f.resize((nw, nh), Image.LANCZOS))
+        canvas_w = max(r.width for r in resized)
+        canvas_h = max(r.height for r in resized)
 
-        def norm(f):
-            canvas = Image.new("RGBA", (base_w, base_h), (0, 0, 0, 0))
-            canvas.paste(f, ((base_w - f.width) // 2, base_h - f.height))
+        def norm(r):
+            canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+            canvas.paste(r, ((canvas_w - r.width) // 2, canvas_h - r.height))
             return canvas
 
-        self.crawl_frames = [norm(f) for f in self.crawl_frames]
-        self.scare_frames = [norm(f) for f in self.scare_frames]
-        self.natural_size = (base_w, base_h)
+        self.crawl_frames = [norm(r) for r in resized[:n_c]]
+        self.scare_frames = [norm(r) for r in resized[n_c:]]
+        self.natural_size = (canvas_w, canvas_h)
         self.cfg = load_char_cfg(name)
         self.cfg["follow_mouse"] = load_global_cfg().get("follow_mouse", False)
         self.face_dir = get_char_facing(name)
@@ -363,6 +372,8 @@ class PetApp:
 
         self.follow_var = tk.BooleanVar(value=self.cfg["follow_mouse"])
         self.pause_var = tk.BooleanVar(value=False)
+        self.char_radio = tk.StringVar(value=self.char_name)
+        self.char_menu = tk.Menu(self.root, tearoff=0)
         self.menu = tk.Menu(self.root, tearoff=0)
         self.menu.add_checkbutton(label="暂停", variable=self.pause_var,
                                   command=self._toggle_pause)
@@ -370,10 +381,12 @@ class PetApp:
         self.menu.add_checkbutton(label="追随鼠标", variable=self.follow_var,
                                   command=self._toggle_follow)
         self.menu.add_command(label="新建宠物", command=self.launch_new_instance)
+        self.menu.add_cascade(label="角色", menu=self.char_menu)
         self.menu.add_command(label="角色管理", command=self.open_character_manager)
         self.menu.add_separator()
         self.menu.add_command(label="设置", command=self.open_settings)
         self.menu.add_command(label="退出", command=self.shutdown)
+        self._rebuild_char_menu()
 
         w, h = self.size
         self.screen_w = self.root.winfo_screenwidth()
@@ -479,6 +492,9 @@ class PetApp:
                     pystray.MenuItem(
                         "新建宠物", lambda: self.launch_new_instance()),
                     pystray.MenuItem(
+                        "角色",
+                        self._tray_char_menu()),
+                    pystray.MenuItem(
                         "角色管理", lambda: self.cmd_q.put("charmgr")),
                     pystray.MenuItem("设置", lambda: self.cmd_q.put("settings")),
                     pystray.MenuItem("退出", lambda: self.cmd_q.put("quit")),
@@ -495,6 +511,36 @@ class PetApp:
                 self.tray.update_menu()
             except Exception:
                 pass
+
+    def _rebuild_char_menu(self):
+        if not getattr(self, "char_menu", None):
+            return
+        self.char_menu.delete(0, "end")
+        self.char_radio.set(self.char_name)
+        for name in sorted(list_characters()):
+            self.char_menu.add_radiobutton(
+                label=name, value=name, variable=self.char_radio,
+                command=lambda n=name: self._switch_to(n))
+
+    def _tray_char_menu(self):
+        import pystray
+        try:
+            return pystray.Menu(*[
+                pystray.MenuItem(
+                    name,
+                    lambda n=name: self.cmd_q.put(("switch", n)),
+                    checked=lambda item, n=name: self.char_name == n,
+                    radio=True)
+                for name in sorted(list_characters())
+            ])
+        except Exception:
+            return pystray.Menu()
+
+    def _toggle_follow_tray(self):
+        self.cfg["follow_mouse"] = not self.cfg["follow_mouse"]
+        self.follow_var.set(self.cfg["follow_mouse"])
+        save_global_cfg(self.cfg)
+        self._refresh_tray_menu()
 
     def launch_new_instance(self):
         try:
@@ -917,6 +963,8 @@ class PetApp:
         self._load_character(name)
         self._close_settings()
         self._rebuild_char_cards()
+        self._rebuild_char_menu()
+        self._refresh_tray_menu()
 
     def _close_settings(self):
         if self.settings_win and self.settings_win.winfo_exists():
@@ -1221,6 +1269,8 @@ class PetApp:
                     self.root.after(0, self.open_character_manager)
                 elif cmd == "quit":
                     self.shutdown()
+                elif isinstance(cmd, tuple) and cmd and cmd[0] == "switch":
+                    self.root.after(0, lambda: self._switch_to(cmd[1]))
         except queue.Empty:
             pass
 
