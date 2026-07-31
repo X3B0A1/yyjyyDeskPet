@@ -180,6 +180,16 @@ def natkey(s):
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", s)]
 
 
+def merge_unique(a, b):
+    seen = set()
+    out = []
+    for x in list(a) + list(b):
+        if x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
+
 def load_frames(folder, prefix):
     files = [f for f in os.listdir(folder)
              if f.startswith(prefix + "_")
@@ -268,8 +278,18 @@ class PetApp:
         self.char_name = name
         self.crawl_frames = load_frames(folder, "crawl")
         self.scare_frames = load_frames(folder, "scare")
-        self.natural_size = (self.crawl_frames[0].width,
-                             self.crawl_frames[0].height)
+        all_frames = self.crawl_frames + self.scare_frames
+        base_w = max(f.width for f in all_frames)
+        base_h = max(f.height for f in all_frames)
+
+        def norm(f):
+            canvas = Image.new("RGBA", (base_w, base_h), (0, 0, 0, 0))
+            canvas.paste(f, ((base_w - f.width) // 2, base_h - f.height))
+            return canvas
+
+        self.crawl_frames = [norm(f) for f in self.crawl_frames]
+        self.scare_frames = [norm(f) for f in self.scare_frames]
+        self.natural_size = (base_w, base_h)
         self.cfg = load_char_cfg(name)
         self.cfg["follow_mouse"] = load_global_cfg().get("follow_mouse", False)
         self.face_dir = get_char_facing(name)
@@ -952,8 +972,10 @@ class PetApp:
         self._edit_picker_row(dlg, "惊吓图片（重新选择将替换）", "scare")
 
         self.edit_hint.pack(fill="x", padx=18, pady=(2, 0))
-        tk.Label(dlg, text="不重新选择则保留原图片；改名后角色管理同步更新。",
-                 bg=BG, fg="#8a919a", font=FONT, anchor="w").pack(fill="x", padx=18, pady=(6, 0))
+        tk.Label(dlg, text="不重新选择则保留原图片；改名后角色管理同步更新。\n"
+                 "可按住 Ctrl/Shift 一次多选，也可重复点击「重新选择」继续追加。",
+                 bg=BG, fg="#8a919a", font=FONT, anchor="w", justify="left"
+                 ).pack(fill="x", padx=18, pady=(6, 0))
 
         btns = tk.Frame(dlg, bg=BG)
         btns.pack(fill="x", padx=18, pady=(12, 16))
@@ -988,21 +1010,20 @@ class PetApp:
             self.edit_scare_prev = prev
 
     def _pick_edit(self, kind):
-        files = filedialog.askopenfilenames(
+        files = list(filedialog.askopenfilenames(
             title="选择爬行图片" if kind == "crawl" else "选择惊吓图片",
             filetypes=[("图片文件", "*.png *.jpg *.jpeg *.bmp *.gif *.webp"),
-                       ("所有文件", "*.*")])
+                       ("所有文件", "*.*")]))
         if not files:
             return
-        files = list(files)
         if kind == "crawl":
-            self.edit_crawl_files = files
-            self.edit_crawl_lbl.configure(text=f"当前→{len(files)} 张")
-            self._show_preview(self.edit_crawl_prev, files)
+            self.edit_crawl_files = merge_unique(self.edit_crawl_files, files)
+            self.edit_crawl_lbl.configure(text=f"当前→{len(self.edit_crawl_files)} 张")
+            self._show_preview(self.edit_crawl_prev, self.edit_crawl_files)
         else:
-            self.edit_scare_files = files
-            self.edit_scare_lbl.configure(text=f"当前→{len(files)} 张")
-            self._show_preview(self.edit_scare_prev, files)
+            self.edit_scare_files = merge_unique(self.edit_scare_files, files)
+            self.edit_scare_lbl.configure(text=f"当前→{len(self.edit_scare_files)} 张")
+            self._show_preview(self.edit_scare_prev, self.edit_scare_files)
 
     def _replace_frames(self, folder, prefix, files):
         for f in os.listdir(folder):
@@ -1087,8 +1108,10 @@ class PetApp:
         self._picker_row(dlg, "惊吓图片（可多选，作为惊吓帧）", "scare", 1)
 
         self.add_hint.pack(fill="x", padx=18, pady=(2, 0))
-        tk.Label(dlg, text="选择顺序即播放顺序；至少各 1 张；将复制到角色目录。",
-                 bg=BG, fg="#8a919a", font=FONT, anchor="w").pack(fill="x", padx=18, pady=(6, 0))
+        tk.Label(dlg, text="选择顺序即播放顺序；至少各 1 张；将复制到角色目录。\n"
+                 "可按住 Ctrl/Shift 一次多选，也可重复点击「选择图片」继续追加。",
+                 bg=BG, fg="#8a919a", font=FONT, anchor="w", justify="left"
+                 ).pack(fill="x", padx=18, pady=(6, 0))
 
         btns = tk.Frame(dlg, bg=BG)
         btns.pack(fill="x", padx=18, pady=(12, 16))
@@ -1132,21 +1155,20 @@ class PetApp:
             self.add_scare_prev = prev
 
     def _pick(self, kind):
-        files = filedialog.askopenfilenames(
+        files = list(filedialog.askopenfilenames(
             title="选择爬行图片" if kind == "crawl" else "选择惊吓图片",
             filetypes=[("图片文件", "*.png *.jpg *.jpeg *.bmp *.gif *.webp"),
-                       ("所有文件", "*.*")])
+                       ("所有文件", "*.*")]))
         if not files:
             return
-        files = list(files)
         if kind == "crawl":
-            self.add_crawl_files = files
-            self.add_crawl_lbl.configure(text=f"{len(files)} 张")
-            self._show_preview(self.add_crawl_prev, files)
+            self.add_crawl_files = merge_unique(self.add_crawl_files, files)
+            self.add_crawl_lbl.configure(text=f"{len(self.add_crawl_files)} 张")
+            self._show_preview(self.add_crawl_prev, self.add_crawl_files)
         else:
-            self.add_scare_files = files
-            self.add_scare_lbl.configure(text=f"{len(files)} 张")
-            self._show_preview(self.add_scare_prev, files)
+            self.add_scare_files = merge_unique(self.add_scare_files, files)
+            self.add_scare_lbl.configure(text=f"{len(self.add_scare_files)} 张")
+            self._show_preview(self.add_scare_prev, self.add_scare_files)
 
     def _show_preview(self, frame, files):
         for w in frame.winfo_children():
