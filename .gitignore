@@ -1,0 +1,10 @@
+# Build / runtime artifacts
+build/
+__pycache__/
+*.spec
+dist/
+
+# Runtime-generated data
+characters/
+characters.json
+pet_config.json
