@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import tkinter as tk
@@ -19,6 +20,7 @@ from PIL import Image, ImageTk
 IS_MAC = sys.platform == "darwin"
 IS_WINDOWS = sys.platform == "win32"
 APP_NAME = "SylaiDesk"
+DEFAULT_CHARACTER = "tjm"
 LOG = logging.getLogger(__name__)
 
 KEY = "#010203"
@@ -77,6 +79,9 @@ def base_dir():
 
 
 def data_dir():
+    override = os.environ.get("SYLAIDESK_DATA_DIR")
+    if override:
+        return os.path.abspath(os.path.expanduser(override))
     # A signed .app bundle and /Applications must never hold mutable data.
     if IS_MAC:
         return os.path.expanduser(f"~/Library/Application Support/{APP_NAME}")
@@ -292,6 +297,11 @@ class PetApp:
             shutil.copy2(resource("0.png"), os.path.join(folder, "crawl_1.png"))
             shutil.copy2(resource("c1.png"), os.path.join(folder, "scare_1.png"))
             shutil.copy2(resource("c2.png"), os.path.join(folder, "scare_2.png"))
+        # Bundle presets separately from writable user characters. Copy once
+        # so upgrades never overwrite the user's edited images or settings.
+        folder = os.path.join(char_dir(), DEFAULT_CHARACTER)
+        if not os.path.exists(folder):
+            shutil.copytree(resource(os.path.join("presets", DEFAULT_CHARACTER)), folder)
 
     def _load_current(self):
         try:
@@ -302,7 +312,9 @@ class PetApp:
         except Exception:
             pass
         chars = list_characters()
-        return chars[0] if chars else "美洲狮"
+        if DEFAULT_CHARACTER in chars:
+            return DEFAULT_CHARACTER
+        return chars[0] if chars else DEFAULT_CHARACTER
 
     def _load_character(self, name):
         folder = os.path.join(char_dir(), name)
@@ -1048,7 +1060,7 @@ class PetApp:
                 self._load_character(others[0])
             else:
                 self._ensure_characters()
-                self._load_character("美洲狮")
+                self._load_character(DEFAULT_CHARACTER)
         shutil.rmtree(os.path.join(char_dir(), name), ignore_errors=True)
         self._rebuild_char_cards()
         self._rebuild_char_menu()
@@ -1369,6 +1381,37 @@ class PetApp:
             self.root.destroy()
 
 
+def desktop_selftest():
+    # Verify the packaged application with fresh data, without changing any
+    # existing user settings or relying on images beside the executable.
+    previous = os.environ.get("SYLAIDESK_DATA_DIR")
+    try:
+        with tempfile.TemporaryDirectory(prefix="sylaidesk-selftest-") as folder:
+            os.environ["SYLAIDESK_DATA_DIR"] = folder
+            app = PetApp()
+            errors = []
+            app.root.report_callback_exception = lambda *error: errors.append(error)
+            try:
+                app.root.after(900, app.root.quit)
+                app.root.mainloop()
+                ok = (app.char_name == DEFAULT_CHARACTER
+                      and len(app.crawl_frames) == 2
+                      and len(app.scare_frames) == 2
+                      and app.tray is not None and app.tray.visible
+                      and not errors)
+                print("SELFTEST %s char=%s crawl=%d scare=%d" %
+                      ("OK" if ok else "FAILED", app.char_name,
+                       len(app.crawl_frames), len(app.scare_frames)))
+                return 0 if ok else 1
+            finally:
+                app.shutdown()
+    finally:
+        if previous is None:
+            os.environ.pop("SYLAIDESK_DATA_DIR", None)
+        else:
+            os.environ["SYLAIDESK_DATA_DIR"] = previous
+
+
 def main():
     if sys.platform == "win32":
         try:
@@ -1376,19 +1419,10 @@ def main():
         except Exception:
             pass
 
-    app = PetApp()
-
     if "--selftest" in sys.argv:
-        root = app.root
-        for _ in range(30):
-            root.update()
-            time.sleep(0.03)
-        print("SELFTEST OK state=%s char=%s crawl=%d scare=%d pos=%s" %
-              (app.state, app.char_name, len(app.crawl_frames),
-               len(app.scare_frames), [int(x) for x in app.pos]))
-        app.shutdown()
-        return 0
+        return desktop_selftest()
 
+    app = PetApp()
     app.root.mainloop()
     return 0
 

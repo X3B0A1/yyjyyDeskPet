@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os
 import queue
 import sys
@@ -155,16 +157,53 @@ class CharacterTests(unittest.TestCase):
                 patch.object(main, "data_dir", return_value=folder):
             app = main.PetApp.__new__(main.PetApp)
             app._ensure_characters()
-            self.assertEqual(main.list_characters(), ["美洲狮"])
-            for filename in ("crawl_1.png", "scare_1.png", "scare_2.png"):
-                self.assertTrue((Path(main.char_dir()) / "美洲狮" / filename).is_file())
-            main.set_char_facing("美洲狮", "right")
-            main.save_char_cfg("美洲狮", {**main.DEFAULTS, "scale": 75})
+            self.assertEqual(set(main.list_characters()), {"tjm", "美洲狮"})
+            self.assertEqual(app._load_current(), "tjm")
+            for filename in ("crawl_1.png", "crawl_2.png", "scare_1.png", "scare_2.png", "config.json"):
+                copied = Path(main.char_dir()) / "tjm" / filename
+                bundled = Path(main.resource("presets")) / "tjm" / filename
+                self.assertEqual(hashlib.sha256(copied.read_bytes()).digest(),
+                                 hashlib.sha256(bundled.read_bytes()).digest())
+            self.assertEqual(main.load_char_cfg("tjm")["crawl_speed"], 210)
+            self.assertEqual(main.load_char_cfg("tjm")["scale"], 50)
+            self.assertEqual(main.get_char_facing("tjm"), "right")
+            main.set_char_facing("tjm", "left")
+            main.save_char_cfg("tjm", {**main.DEFAULTS, "scale": 75})
+            image = Path(main.char_dir()) / "tjm" / "crawl_1.png"
+            Image.new("RGBA", (4, 4), (255, 0, 0, 255)).save(image)
             main.save_global_cfg({"follow_mouse": True})
             app._ensure_characters()
-            self.assertEqual(main.load_char_cfg("美洲狮")["scale"], 75)
-            self.assertEqual(main.get_char_facing("美洲狮"), "right")
+            self.assertEqual(main.load_char_cfg("tjm")["scale"], 75)
+            self.assertEqual(main.get_char_facing("tjm"), "left")
+            with Image.open(image) as edited:
+                self.assertEqual(edited.size, (4, 4))
             self.assertTrue(main.load_global_cfg()["follow_mouse"])
+
+    def test_upgrade_adds_tjm_and_keeps_saved_selection(self):
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(main, "data_dir", return_value=folder):
+            existing = Path(main.char_dir()) / "美洲狮"
+            existing.mkdir(parents=True)
+            (existing / "config.json").write_text('{"scale": 80}', encoding="utf-8")
+            Path(main.manifest_path()).write_text(
+                json.dumps({"current": "美洲狮"}), encoding="utf-8")
+            app = main.PetApp.__new__(main.PetApp)
+            app._ensure_characters()
+            self.assertTrue((Path(main.char_dir()) / "tjm" / "crawl_2.png").is_file())
+            self.assertEqual(app._load_current(), "美洲狮")
+            self.assertEqual(main.load_char_cfg("美洲狮")["scale"], 80)
+            Path(main.manifest_path()).write_text('{"current": "missing"}', encoding="utf-8")
+            self.assertEqual(app._load_current(), "tjm")
+
+    def test_frozen_first_launch_uses_bundled_tjm(self):
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(main, "data_dir", return_value=folder), \
+                patch.object(sys, "frozen", True, create=True), \
+                patch.object(sys, "_MEIPASS", str(Path(main.__file__).parent), create=True):
+            app = main.PetApp.__new__(main.PetApp)
+            app._ensure_characters()
+            self.assertEqual(app._load_current(), "tjm")
+            self.assertEqual(len(main.load_frames(str(Path(main.char_dir()) / "tjm"), "crawl")), 2)
 
     def test_switching_from_scare_to_shorter_character_resets_frame(self):
         with tempfile.TemporaryDirectory() as folder, \

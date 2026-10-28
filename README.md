@@ -2,6 +2,8 @@
 
 一只会在你电脑桌面上散步的 Q 版美洲狮桌面宠物。它在屏幕上慢慢爬行、偶尔扑向鼠标、被点到会吓一跳。支持多角色、每个角色独立调节动作参数，还能自己添加喜欢的宠物。
 
+当前版本内置 **tjm**，首次启动默认使用 tjm（两张爬行图、两张惊吓图，默认朝右、大小 50%）。美洲狮仍可在「角色」菜单中选择。升级时会添加 tjm，并保留已有的角色选择及自定义设置；已使用过旧版本的用户可在「角色」菜单切换到 tjm。
+
 程序运行时完全离线。支持 Windows 和 macOS；源码运行需要先安装 Python 和依赖。
 
 ![美洲狮来了](0.png)
@@ -128,7 +130,7 @@ Windows 的 `characters/` 在程序旁边；macOS 在 `~/Library/Application Sup
    python main.py
    ```
 
-> 首次启动会自动创建角色目录，并从内置图片生成默认角色「美洲狮」。macOS 建议使用上面的虚拟环境运行方式。透明图片处理由 Pillow 完成，无需 NumPy。
+> 首次启动会自动创建角色目录，复制内置的 tjm 预设并生成美洲狮角色，默认选择 tjm。macOS 建议使用上面的虚拟环境运行方式。透明图片处理由 Pillow 完成，无需 NumPy。
 
 ## 打包应用
 
@@ -176,6 +178,7 @@ Mac 实机验收时请检查：透明背景无色块、菜单栏和 Control＋�
 ├── requirements.txt       # 运行依赖
 ├── requirements-build.txt # 打包依赖
 ├── sylai.spec             # Windows / macOS 打包配置
+├── presets/tjm/           # 内置 tjm 图片和初始参数，打包时一并包含
 ├── tests/                 # 兼容性测试和桌面自检
 ├── dist/                  # 打包产物（exe 或 app）
 └── characters/            # Windows 角色数据；Mac 角色数据在用户目录

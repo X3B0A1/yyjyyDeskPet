@@ -1,0 +1,15 @@
+{
+  "crawl_speed": 210,
+  "crawl_fps": 3.0,
+  "wobble_amp": 12,
+  "wobble_freq": 2.0,
+  "scale": 50,
+  "hover_radius": 150,
+  "hover_time": 3.0,
+  "pounce_chance": 30,
+  "pounce_speed": 480,
+  "scare_duration": 3.0,
+  "frame_interval": 120,
+  "shake": 6,
+  "face_direction": "right"
+}

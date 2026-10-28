@@ -16,6 +16,11 @@ class DesktopSmokeTest(unittest.TestCase):
             errors = []
             app.root.report_callback_exception = lambda *error: errors.append(error)
             try:
+                self.assertEqual(app.char_name, "tjm")
+                self.assertEqual(len(app.crawl_frames), 2)
+                self.assertEqual(len(app.scare_frames), 2)
+                self.assertEqual(app.face_dir, "right")
+                self.assertEqual(app.cfg["scale"], 50)
                 # Use the real mainloop so macOS Cocoa events are also serviced.
                 app.root.after(500, app.root.quit)
                 app.root.mainloop()

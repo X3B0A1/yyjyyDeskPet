@@ -9,6 +9,7 @@ on:
       - "requirements*.txt"
       - "sylai.spec"
       - "*.png"
+      - "presets/**"
       - ".github/workflows/build.yml"
   pull_request:
     paths:
@@ -17,6 +18,7 @@ on:
       - "requirements*.txt"
       - "sylai.spec"
       - "*.png"
+      - "presets/**"
       - ".github/workflows/build.yml"
 
 permissions:
@@ -43,12 +45,15 @@ jobs:
         run: python -m unittest discover -s tests -p gui_smoke.py -v
       - name: Build native app
         run: python -m PyInstaller --noconfirm --distpath build/dist --workpath build/work sylai.spec
+      - name: Test packaged Mac app with fresh tjm data
+        if: runner.os == 'macOS'
+        run: '"build/dist/美洲狮来了.app/Contents/MacOS/美洲狮来了" --selftest'
       - name: Archive macOS app with executable permissions
         if: runner.os == 'macOS'
-        run: ditto -c -k --sequesterRsrc --keepParent "build/dist/美洲狮来了.app" "build/dist/SylaiDesk-macOS-${{ runner.arch }}.zip"
+        run: ditto -c -k --sequesterRsrc --keepParent "build/dist/美洲狮来了.app" "build/dist/SylaiDesk-tjm-macOS-${{ runner.arch }}.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: SylaiDesk-${{ runner.os }}-${{ runner.arch }}
+          name: SylaiDesk-tjm-${{ runner.os }}-${{ runner.arch }}
           path: |
             build/dist/*.exe
             build/dist/*.zip
