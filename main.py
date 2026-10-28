@@ -1,5 +1,6 @@
 import ctypes
 import json
+import logging
 import math
 import os
 import queue
@@ -13,8 +14,12 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-import numpy as np
 from PIL import Image, ImageTk
+
+IS_MAC = sys.platform == "darwin"
+IS_WINDOWS = sys.platform == "win32"
+APP_NAME = "SylaiDesk"
+LOG = logging.getLogger(__name__)
 
 KEY = "#010203"
 BG = "#1f2225"
@@ -59,8 +64,10 @@ PARAM_DEFS = [
     ("shake", "惊吓抖动幅度", 0, 20, 1),
 ]
 
-FONT = ("Microsoft YaHei UI", 9)
-FONT_BOLD = ("Microsoft YaHei UI", 9, "bold")
+FONT_FAMILY = "PingFang SC" if IS_MAC else "Microsoft YaHei UI"
+FONT = (FONT_FAMILY, 9)
+FONT_BOLD = (FONT_FAMILY, 9, "bold")
+MULTISELECT_HINT = "Command/Shift" if IS_MAC else "Ctrl/Shift"
 
 
 def base_dir():
@@ -69,16 +76,23 @@ def base_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def data_dir():
+    # A signed .app bundle and /Applications must never hold mutable data.
+    if IS_MAC:
+        return os.path.expanduser(f"~/Library/Application Support/{APP_NAME}")
+    return base_dir()
+
+
 def config_path():
-    return os.path.join(base_dir(), "pet_config.json")
+    return os.path.join(data_dir(), "pet_config.json")
 
 
 def char_dir():
-    return os.path.join(base_dir(), "characters")
+    return os.path.join(data_dir(), "characters")
 
 
 def manifest_path():
-    return os.path.join(base_dir(), "characters.json")
+    return os.path.join(data_dir(), "characters.json")
 
 
 def resource(name):
@@ -169,11 +183,26 @@ def list_characters():
 
 
 def flatten_to_key(img):
-    arr = np.asarray(img.convert("RGBA"), dtype=np.float32)
-    a = arr[..., 3:4] / 255.0
-    key = np.array([0x01, 0x02, 0x03, 255], dtype=np.float32)
-    out = arr * a + key * (1.0 - a)
-    return Image.fromarray(out[..., :3].astype(np.uint8), "RGB")
+    rgba = img.convert("RGBA")
+    background = Image.new("RGB", rgba.size, KEY)
+    background.paste(rgba, mask=rgba.getchannel("A"))
+    return background
+
+
+def configure_pet_window(root):
+    root.overrideredirect(True)
+    root.attributes("-topmost", True)
+    if IS_MAC:
+        root.attributes("-transparent", True)
+        background = "systemTransparent"
+    elif IS_WINDOWS:
+        root.attributes("-transparentcolor", KEY)
+        root.attributes("-toolwindow", True)
+        background = KEY
+    else:
+        raise RuntimeError("目前支持 Windows 和 macOS 的 Tk 窗口系统。")
+    root.configure(bg=background)
+    return background
 
 
 def natkey(s):
@@ -198,7 +227,8 @@ def load_frames(folder, prefix):
     frames = []
     for f in files:
         try:
-            frames.append(Image.open(os.path.join(folder, f)).convert("RGBA"))
+            with Image.open(os.path.join(folder, f)) as img:
+                frames.append(img.convert("RGBA"))
         except Exception:
             pass
     if not frames:
@@ -253,6 +283,7 @@ class PetApp:
 
         self._build()
         self._setup_tray()
+
     def _ensure_characters(self):
         os.makedirs(char_dir(), exist_ok=True)
         if not list_characters():
@@ -308,6 +339,10 @@ class PetApp:
         self.crawl_idx = 0
         self.scare_idx = 0
         self.crawl_t = 0.0
+        self.state = "crawl"
+        self.hover_since = None
+        self.pounce_target = None
+        self.cur_key = ("c0", False)
         self._scale_images()
         try:
             with open(manifest_path(), "w", encoding="utf-8") as f:
@@ -344,9 +379,10 @@ class PetApp:
                      if f.startswith("crawl_")
                      and os.path.splitext(f)[1].lower() in IMAGE_EXTS]
             if files:
-                img = Image.open(os.path.join(folder, files[0])).convert("RGBA")
+                with Image.open(os.path.join(folder, files[0])) as source:
+                    img = source.convert("RGBA")
                 img.thumbnail((52, 52), Image.LANCZOS)
-                ph = ImageTk.PhotoImage(flatten_to_key(img))
+                ph = ImageTk.PhotoImage(img)
         except Exception:
             ph = None
         self._thumbs[key] = ph
@@ -355,19 +391,22 @@ class PetApp:
     # ---------- 窗口构建 ----------
     def _build(self):
         self.root = tk.Tk()
-        self.root.overrideredirect(True)
-        self.root.attributes("-topmost", True)
-        self.root.attributes("-transparentcolor", KEY)
-        self.root.configure(bg=KEY)
-        self.root.attributes("-toolwindow", True)
+        background = configure_pet_window(self.root)
         self.root.protocol("WM_DELETE_WINDOW", self.shutdown)
+        if IS_MAC:
+            self.root.createcommand("tk::mac::Quit", self.shutdown)
 
-        self.label = tk.Label(self.root, bg=KEY, bd=0, cursor="hand2")
+        self.label = tk.Label(self.root, bg=background, bd=0,
+                              highlightthickness=0, cursor="hand2")
         self.label.pack()
         self.label.bind("<Button-1>", self._on_lbutton)
         self.label.bind("<B1-Motion>", self._on_drag)
         self.label.bind("<ButtonRelease-1>", self._on_drag_end)
         self.label.bind("<Button-3>", self._popup_menu)
+        if IS_MAC:
+            self.label.bind("<Button-2>", self._popup_menu)
+            self.label.bind("<Control-Button-1>", self._popup_menu)
+            self.label.bind("<Control-ButtonRelease-1>", lambda event: "break")
         self.root.bind("<Configure>", self._on_configure)
 
         self.follow_var = tk.BooleanVar(value=self.cfg["follow_mouse"])
@@ -391,8 +430,8 @@ class PetApp:
         w, h = self.size
         self.screen_w = self.root.winfo_screenwidth()
         self.screen_h = self.root.winfo_screenheight()
-        self.pos = [random.uniform(0, self.screen_w - w),
-                    random.uniform(0, self.screen_h - h)]
+        self.pos = [random.uniform(0, max(0, self.screen_w - w)),
+                    random.uniform(0, max(0, self.screen_h - h))]
         self._set_frame("c0", mirrored=False)
         self.root.geometry(f"{w}x{h}+{int(self.pos[0])}+{int(self.pos[1])}")
 
@@ -423,7 +462,8 @@ class PetApp:
             img = self.scaled[key]
             if mirrored:
                 img = img.transpose(Image.FLIP_LEFT_RIGHT)
-            self.frame_photos[ck] = ImageTk.PhotoImage(flatten_to_key(img))
+            self.frame_photos[ck] = ImageTk.PhotoImage(
+                img if IS_MAC else flatten_to_key(img))
         self.label.configure(image=self.frame_photos[ck])
         self.cur_key = ck
         self.cur_size = (self.frame_photos[ck].width(),
@@ -434,6 +474,7 @@ class PetApp:
             self.menu.tk_popup(event.x_root, event.y_root)
         finally:
             self.menu.grab_release()
+        return "break"
 
     # ---------- 暂停 / 拖动 ----------
     def _toggle_pause(self):
@@ -455,6 +496,9 @@ class PetApp:
         self._dragging = self.paused
 
     def _on_drag(self, event):
+        if math.hypot(event.x_root - self._press_x,
+                      event.y_root - self._press_y) > 5:
+            self._dragging = True
         if not self._dragging:
             return
         w, h = self.cur_size
@@ -477,6 +521,7 @@ class PetApp:
 
     # ---------- 托盘 ----------
     def _setup_tray(self):
+        self.tray = None
         try:
             import pystray
             icon_img = self.crawl_frames[0].resize((64, 64), Image.LANCZOS)
@@ -484,13 +529,13 @@ class PetApp:
                 "sylai_pet", icon_img, "美洲狮来了",
                 menu=pystray.Menu(
                     pystray.MenuItem(
-                        "暂停", lambda: self._toggle_pause_tray(),
+                        "暂停", lambda: self.cmd_q.put("pause"),
                         checked=lambda item: self.paused),
                     pystray.MenuItem(
-                        "追随鼠标", lambda: self._toggle_follow(),
+                        "追随鼠标", lambda: self.cmd_q.put("follow"),
                         checked=lambda item: self.cfg["follow_mouse"]),
                     pystray.MenuItem(
-                        "新建宠物", lambda: self.launch_new_instance()),
+                        "新建宠物", lambda: self.cmd_q.put("new")),
                     pystray.MenuItem(
                         "角色",
                         self._tray_char_menu()),
@@ -500,9 +545,20 @@ class PetApp:
                     pystray.MenuItem("退出", lambda: self.cmd_q.put("quit")),
                 ),
             )
-            self.tray.visible = True
-            threading.Thread(target=self.tray.run, daemon=True).start()
+            if IS_MAC:
+                # Cocoa and Tk share the main thread's native event loop.
+                # The default setup calls Cocoa from a worker; show it here.
+                self.tray.run_detached(setup=lambda icon: None)
+                self.tray.visible = True
+            else:
+                threading.Thread(target=self.tray.run, daemon=True).start()
         except Exception:
+            LOG.warning("无法启用托盘，可通过宠物右键菜单操作。", exc_info=True)
+            if self.tray is not None:
+                try:
+                    self.tray.stop()
+                except Exception:
+                    pass
             self.tray = None
 
     def _refresh_tray_menu(self):
@@ -524,17 +580,20 @@ class PetApp:
 
     def _tray_char_menu(self):
         import pystray
-        try:
-            return pystray.Menu(*[
-                pystray.MenuItem(
-                    name,
-                    lambda n=name: self.cmd_q.put(("switch", n)),
+        def switch(character):
+            def action(icon, item):
+                self.cmd_q.put(("switch", character))
+            return action
+
+        def items():
+            for name in sorted(list_characters()):
+                # pystray passes (icon, item); capture the name separately.
+                yield pystray.MenuItem(
+                    name, switch(name),
                     checked=lambda item, n=name: self.char_name == n,
                     radio=True)
-                for name in sorted(list_characters())
-            ])
-        except Exception:
-            return pystray.Menu()
+
+        return pystray.Menu(items)
 
     def _toggle_follow_tray(self):
         self.cfg["follow_mouse"] = not self.cfg["follow_mouse"]
@@ -545,11 +604,16 @@ class PetApp:
     def launch_new_instance(self):
         try:
             if getattr(sys, "frozen", False):
-                os.startfile(sys.executable)
+                command = [sys.executable]
             else:
-                subprocess.Popen([sys.executable, os.path.abspath(__file__)])
-        except Exception:
-            pass
+                command = [sys.executable, os.path.abspath(__file__)]
+            # PyInstaller 6.9+ needs this for an independent frozen process.
+            env = os.environ.copy()
+            if getattr(sys, "frozen", False):
+                env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+            subprocess.Popen(command, env=env)
+        except OSError as exc:
+            messagebox.showerror("无法新建宠物", str(exc), parent=self.root)
 
     # ---------- 逻辑 ----------
     def tick(self):
@@ -559,8 +623,10 @@ class PetApp:
         dt = min(now - self.last, 0.1)
         self.last = now
         self._drain_queue()
+        if not self.running:
+            return
 
-        if self.paused:
+        if self.paused or self._dragging:
             self.hover_since = None
             self.root.after(33, self.tick)
             return
@@ -753,9 +819,9 @@ class PetApp:
 
         header = tk.Frame(win, bg=BG)
         header.pack(fill="x", padx=18, pady=(16, 2))
-        tk.Label(header, text="美洲狮来了", font=("Microsoft YaHei UI", 15, "bold"),
+        tk.Label(header, text="美洲狮来了", font=(FONT_FAMILY, 15, "bold"),
                  bg=BG, fg=ACCENT).pack(side="left")
-        tk.Label(header, text="参数设置", font=("Microsoft YaHei UI", 9),
+        tk.Label(header, text="参数设置", font=(FONT_FAMILY, 9),
                  bg=BG, fg="#8a919a").pack(side="left", padx=(10, 0), pady=(5, 0))
 
         mid = tk.Frame(win, bg=BG)
@@ -862,7 +928,7 @@ class PetApp:
 
         header = tk.Frame(win, bg=BG)
         header.pack(fill="x", padx=18, pady=(16, 4))
-        tk.Label(header, text="角色管理", font=("Microsoft YaHei UI", 15, "bold"),
+        tk.Label(header, text="角色管理", font=(FONT_FAMILY, 15, "bold"),
                  bg=BG, fg=ACCENT).pack(side="left")
         self.mgr_cur = tk.Label(header, text="", font=FONT, bg=BG, fg="#ffd479")
         self.mgr_cur.pack(side="right")
@@ -919,7 +985,7 @@ class PetApp:
         info = tk.Frame(card, bg=bg)
         info.pack(side="left", fill="x", expand=True)
         tk.Label(info, text=name, bg=bg, fg="#ffffff",
-                 font=("Microsoft YaHei UI", 11, "bold")).pack(anchor="w")
+                 font=(FONT_FAMILY, 11, "bold")).pack(anchor="w")
         n_c = len(self._frames_of(name, "crawl"))
         n_s = len(self._frames_of(name, "scare"))
         tk.Label(info, text=f"爬行 {n_c} 帧 · 惊吓 {n_s} 帧", bg=bg, fg="#8a919a",
@@ -985,6 +1051,8 @@ class PetApp:
                 self._load_character("美洲狮")
         shutil.rmtree(os.path.join(char_dir(), name), ignore_errors=True)
         self._rebuild_char_cards()
+        self._rebuild_char_menu()
+        self._refresh_tray_menu()
 
     # ---------- 编辑角色窗口 ----------
     def open_edit_dialog(self, name):
@@ -1006,7 +1074,7 @@ class PetApp:
         name_var = tk.StringVar(value=name)
         self.edit_hint = tk.Label(dlg, text="", bg=BG, fg=DANGER, font=FONT)
 
-        tk.Label(dlg, text="编辑角色", font=("Microsoft YaHei UI", 15, "bold"),
+        tk.Label(dlg, text="编辑角色", font=(FONT_FAMILY, 15, "bold"),
                  bg=BG, fg=ACCENT).pack(fill="x", pady=(16, 8), padx=18)
         tk.Label(dlg, text="角色名", bg=BG, fg="#d6dae0", anchor="w",
                  font=FONT).pack(fill="x", padx=18, pady=(6, 0))
@@ -1021,7 +1089,7 @@ class PetApp:
 
         self.edit_hint.pack(fill="x", padx=18, pady=(2, 0))
         tk.Label(dlg, text="不重新选择则保留原图片；改名后角色管理同步更新。\n"
-                 "可按住 Ctrl/Shift 一次多选，也可重复点击「重新选择」继续追加。",
+                 f"可按住 {MULTISELECT_HINT} 一次多选，也可重复点击「重新选择」继续追加。",
                  bg=BG, fg="#8a919a", font=FONT, anchor="w", justify="left"
                  ).pack(fill="x", padx=18, pady=(6, 0))
 
@@ -1118,6 +1186,8 @@ class PetApp:
         dlg.destroy()
         self.edit_dlg = None
         self._rebuild_char_cards()
+        self._rebuild_char_menu()
+        self._refresh_tray_menu()
 
     # ---------- 添加角色窗口 ----------
     def open_add_dialog(self):
@@ -1139,7 +1209,7 @@ class PetApp:
         self.add_hint = tk.Label(dlg, text="", bg=BG, fg=DANGER, font=FONT)
 
         pad = {"padx": 18, "pady": (6, 0)}
-        tk.Label(dlg, text="添加角色", font=("Microsoft YaHei UI", 15, "bold"),
+        tk.Label(dlg, text="添加角色", font=(FONT_FAMILY, 15, "bold"),
                  bg=BG, fg=ACCENT).pack(fill="x", pady=(16, 8), padx=18)
         tk.Label(dlg, text="角色名", bg=BG, fg="#d6dae0", anchor="w",
                  font=FONT).pack(fill="x", **pad)
@@ -1157,7 +1227,7 @@ class PetApp:
 
         self.add_hint.pack(fill="x", padx=18, pady=(2, 0))
         tk.Label(dlg, text="选择顺序即播放顺序；至少各 1 张；将复制到角色目录。\n"
-                 "可按住 Ctrl/Shift 一次多选，也可重复点击「选择图片」继续追加。",
+                 f"可按住 {MULTISELECT_HINT} 一次多选，也可重复点击「选择图片」继续追加。",
                  bg=BG, fg="#8a919a", font=FONT, anchor="w", justify="left"
                  ).pack(fill="x", padx=18, pady=(6, 0))
 
@@ -1223,9 +1293,10 @@ class PetApp:
             w.destroy()
         for f in files[:4]:
             try:
-                img = Image.open(f)
+                with Image.open(f) as source:
+                    img = source.convert("RGBA")
                 img.thumbnail((40, 40), Image.LANCZOS)
-                ph = ImageTk.PhotoImage(flatten_to_key(img))
+                ph = ImageTk.PhotoImage(img)
                 lbl = tk.Label(frame, image=ph, bg=BG, bd=0)
                 lbl.image = ph
                 lbl.pack(side="left", padx=2)
@@ -1257,6 +1328,8 @@ class PetApp:
         dlg.destroy()
         self.add_dlg = None
         self._rebuild_char_cards()
+        self._rebuild_char_menu()
+        self._refresh_tray_menu()
 
     # ---------- 队列 / 退出 ----------
     def _drain_queue(self):
@@ -1264,21 +1337,31 @@ class PetApp:
             while True:
                 cmd = self.cmd_q.get_nowait()
                 if cmd == "settings":
-                    self.root.after(0, self.open_settings)
+                    self.open_settings()
                 elif cmd == "charmgr":
-                    self.root.after(0, self.open_character_manager)
+                    self.open_character_manager()
+                elif cmd == "pause":
+                    self._toggle_pause_tray()
+                elif cmd == "follow":
+                    self._toggle_follow_tray()
+                elif cmd == "new":
+                    self.launch_new_instance()
                 elif cmd == "quit":
                     self.shutdown()
+                    return
                 elif isinstance(cmd, tuple) and cmd and cmd[0] == "switch":
-                    self.root.after(0, lambda: self._switch_to(cmd[1]))
+                    self._switch_to(cmd[1])
         except queue.Empty:
             pass
 
     def shutdown(self):
+        if not self.running:
+            return
         self.running = False
         self._save_all()
         if getattr(self, "tray", None):
             try:
+                self.tray.visible = False
                 self.tray.stop()
             except Exception:
                 pass

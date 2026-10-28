@@ -2,7 +2,10 @@
 build/
 __pycache__/
 *.spec
+!sylai.spec
 dist/
+.venv/
+.pytest_cache/
 
 # Runtime-generated data
 characters/
