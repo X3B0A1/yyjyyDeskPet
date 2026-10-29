@@ -70,6 +70,7 @@ class DesktopSmokeTest(unittest.TestCase):
                 settings_position = (app.settings_win.winfo_x(), app.settings_win.winfo_y())
                 app.pos = [100.0, 100.0]
                 app._place(app.pos)
+                app.root.update_idletasks()
                 before = (app.pet_window.winfo_x(), app.pet_window.winfo_y())
                 app.angle = 0.0
                 app.idle_until = 0.0

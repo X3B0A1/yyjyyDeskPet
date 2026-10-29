@@ -1,4 +1,4 @@
-name: Test and build desktop app
+name: Build zgyyjyy desktop pet
 
 on:
   workflow_dispatch:
@@ -51,20 +51,20 @@ jobs:
         if: runner.os == 'macOS'
         env:
           SYLAIDESK_SELFTEST_OUTPUT: build/mac-selftest
-        run: '"build/dist/美洲狮来了.app/Contents/MacOS/美洲狮来了" --selftest'
+        run: '"build/dist/zgyyjyy桌宠.app/Contents/MacOS/zgyyjyy桌宠" --selftest'
       - name: Save native window verification
         if: always() && runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
-          name: SylaiDesk-tjm-v1.2.1-check-macOS-${{ runner.arch }}
+          name: zgyyjyy-pet-v1.2.1-check-macOS-${{ runner.arch }}
           path: build/mac-selftest/
           if-no-files-found: ignore
       - name: Archive macOS app with executable permissions
         if: runner.os == 'macOS'
-        run: ditto -c -k --sequesterRsrc --keepParent "build/dist/美洲狮来了.app" "build/dist/SylaiDesk-tjm-v1.2.1-macOS-${{ runner.arch }}.zip"
+        run: ditto -c -k --sequesterRsrc --keepParent "build/dist/zgyyjyy桌宠.app" "build/dist/zgyyjyy-pet-v1.2.1-macOS-${{ runner.arch }}.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: SylaiDesk-tjm-v1.2.1-${{ runner.os }}-${{ runner.arch }}
+          name: zgyyjyy-pet-v1.2.1-${{ runner.os }}-${{ runner.arch }}
           path: |
             build/dist/*.exe
             build/dist/*.zip

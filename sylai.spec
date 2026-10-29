@@ -4,7 +4,7 @@ from pathlib import Path
 
 project = Path(SPECPATH)
 is_mac = sys.platform == "darwin"
-name = "美洲狮来了"
+name = "zgyyjyy桌宠"
 
 a = Analysis(
     [str(project / "main.py")],

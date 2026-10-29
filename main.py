@@ -19,7 +19,8 @@ from PIL import Image, ImageTk
 
 IS_MAC = sys.platform == "darwin"
 IS_WINDOWS = sys.platform == "win32"
-APP_NAME = "SylaiDesk"
+APP_NAME = "zgyyjyy桌宠"
+DATA_FOLDER = "SylaiDesk"  # Keep existing installations' characters and settings.
 DEFAULT_CHARACTER = "tjm"
 LOG = logging.getLogger(__name__)
 
@@ -84,7 +85,7 @@ def data_dir():
         return os.path.abspath(os.path.expanduser(override))
     # A signed .app bundle and /Applications must never hold mutable data.
     if IS_MAC:
-        return os.path.expanduser(f"~/Library/Application Support/{APP_NAME}")
+        return os.path.expanduser(f"~/Library/Application Support/{DATA_FOLDER}")
     return base_dir()
 
 
@@ -448,7 +449,7 @@ class PetApp:
         self.pet_window.geometry(f"{w}x{h}+{int(self.pos[0])}+{int(self.pos[1])}")
 
         self.last = time.monotonic()
-        self.root.after(0, self.tick)
+        self._tick_after = self.root.after(0, self.tick)
 
     def _scale_images(self):
         s = self.cfg["scale"] / 100.0
@@ -538,7 +539,7 @@ class PetApp:
             import pystray
             icon_img = self.crawl_frames[0].resize((64, 64), Image.LANCZOS)
             self.tray = pystray.Icon(
-                "sylai_pet", icon_img, "美洲狮来了",
+                "zgyyjyy_pet", icon_img, APP_NAME,
                 menu=pystray.Menu(
                     pystray.MenuItem(
                         "暂停", lambda: self.cmd_q.put("pause"),
@@ -640,7 +641,7 @@ class PetApp:
 
         if self.paused or self._dragging:
             self.hover_since = None
-            self.root.after(33, self.tick)
+            self._tick_after = self.root.after(33, self.tick)
             return
 
         if self.state == "crawl":
@@ -651,7 +652,7 @@ class PetApp:
             self._tick_scare(now)
 
         self._check_hover(now)
-        self.root.after(33, self.tick)
+        self._tick_after = self.root.after(33, self.tick)
 
     def _tick_crawl(self, now, dt):
         self.phase += 2 * math.pi * self.cfg["wobble_freq"] * dt
@@ -820,7 +821,7 @@ class PetApp:
             return
         self._ensure_styles()
         win = tk.Toplevel(self.root)
-        win.title("美洲狮来了 · 设置")
+        win.title(f"{APP_NAME} · 设置")
         win.configure(bg=BG)
         win.resizable(True, True)
         win.minsize(420, 460)
@@ -832,7 +833,7 @@ class PetApp:
 
         header = tk.Frame(win, bg=BG)
         header.pack(fill="x", padx=18, pady=(16, 2))
-        tk.Label(header, text="美洲狮来了", font=(FONT_FAMILY, 15, "bold"),
+        tk.Label(header, text=APP_NAME, font=(FONT_FAMILY, 15, "bold"),
                  bg=BG, fg=ACCENT).pack(side="left")
         tk.Label(header, text="参数设置", font=(FONT_FAMILY, 9),
                  bg=BG, fg="#8a919a").pack(side="left", padx=(10, 0), pady=(5, 0))
@@ -931,7 +932,7 @@ class PetApp:
             self.char_mgr.lift()
             return
         win = tk.Toplevel(self.root)
-        win.title("美洲狮来了 · 角色管理")
+        win.title(f"{APP_NAME} · 角色管理")
         win.configure(bg=BG)
         win.resizable(True, True)
         win.minsize(340, 260)
@@ -1374,6 +1375,9 @@ class PetApp:
         if not self.running:
             return
         self.running = False
+        if getattr(self, "_tick_after", None):
+            self.root.after_cancel(self._tick_after)
+            self._tick_after = None
         self._save_all()
         if getattr(self, "tray", None):
             try:
@@ -1409,6 +1413,7 @@ def desktop_selftest():
                 app.cfg.update(follow_mouse=False, wobble_amp=0, crawl_speed=80)
                 app.pos = [max(0, min(650, app.screen_w - app.cur_size[0] - 40)), 100.0]
                 app._place(app.pos)
+                app.root.update_idletasks()
                 pet_before = (app.pet_window.winfo_x(), app.pet_window.winfo_y())
                 app.angle = 0.0
                 app.idle_until = 0.0
