@@ -197,10 +197,7 @@ def flatten_to_key(img):
 def configure_pet_window(root):
     root.overrideredirect(True)
     root.attributes("-topmost", True)
-    if IS_MAC:
-        root.attributes("-transparent", True)
-        background = "systemTransparent"
-    elif IS_WINDOWS:
+    if IS_WINDOWS:
         root.attributes("-transparentcolor", KEY)
         root.attributes("-toolwindow", True)
         background = KEY
@@ -403,23 +400,26 @@ class PetApp:
     # ---------- 窗口构建 ----------
     def _build(self):
         self.root = tk.Tk()
-        background = configure_pet_window(self.root)
         self.root.protocol("WM_DELETE_WINDOW", self.shutdown)
         if IS_MAC:
+            # Tk owns only stationary dialogs and scheduling. Rendering and
+            # moving the pet belong to an independent Cocoa panel.
+            self.root.withdraw()
+            from macos_pet import MacPetWindow
+            self.pet_window = MacPetWindow(self)
+            self.label = self.pet_window
             self.root.createcommand("tk::mac::Quit", self.shutdown)
-
-        self.label = tk.Label(self.root, bg=background, bd=0,
-                              highlightthickness=0, cursor="hand2")
-        self.label.pack()
-        self.label.bind("<Button-1>", self._on_lbutton)
-        self.label.bind("<B1-Motion>", self._on_drag)
-        self.label.bind("<ButtonRelease-1>", self._on_drag_end)
-        self.label.bind("<Button-3>", self._popup_menu)
-        if IS_MAC:
-            self.label.bind("<Button-2>", self._popup_menu)
-            self.label.bind("<Control-Button-1>", self._popup_menu)
-            self.label.bind("<Control-ButtonRelease-1>", lambda event: "break")
-        self.root.bind("<Configure>", self._on_configure)
+        else:
+            self.pet_window = self.root
+            background = configure_pet_window(self.root)
+            self.label = tk.Label(self.root, bg=background, bd=0,
+                                  highlightthickness=0, cursor="hand2")
+            self.label.pack()
+            self.label.bind("<Button-1>", self._on_lbutton)
+            self.label.bind("<B1-Motion>", self._on_drag)
+            self.label.bind("<ButtonRelease-1>", self._on_drag_end)
+            self.label.bind("<Button-3>", self._popup_menu)
+            self.root.bind("<Configure>", self._on_configure)
 
         self.follow_var = tk.BooleanVar(value=self.cfg["follow_mouse"])
         self.pause_var = tk.BooleanVar(value=False)
@@ -445,7 +445,7 @@ class PetApp:
         self.pos = [random.uniform(0, max(0, self.screen_w - w)),
                     random.uniform(0, max(0, self.screen_h - h))]
         self._set_frame("c0", mirrored=False)
-        self.root.geometry(f"{w}x{h}+{int(self.pos[0])}+{int(self.pos[1])}")
+        self.pet_window.geometry(f"{w}x{h}+{int(self.pos[0])}+{int(self.pos[1])}")
 
         self.last = time.monotonic()
         self.root.after(0, self.tick)
@@ -474,8 +474,8 @@ class PetApp:
             img = self.scaled[key]
             if mirrored:
                 img = img.transpose(Image.FLIP_LEFT_RIGHT)
-            self.frame_photos[ck] = ImageTk.PhotoImage(
-                img if IS_MAC else flatten_to_key(img))
+            self.frame_photos[ck] = (self.pet_window.make_photo(img) if IS_MAC
+                                     else ImageTk.PhotoImage(flatten_to_key(img)))
         self.label.configure(image=self.frame_photos[ck])
         self.cur_key = ck
         self.cur_size = (self.frame_photos[ck].width(),
@@ -502,8 +502,8 @@ class PetApp:
 
     def _on_lbutton(self, event):
         self._press_x, self._press_y = event.x_root, event.y_root
-        self._win_offset = (event.x_root - self.root.winfo_x(),
-                            event.y_root - self.root.winfo_y())
+        self._win_offset = (event.x_root - self.pet_window.winfo_x(),
+                            event.y_root - self.pet_window.winfo_y())
         self._drag_off = self._win_offset
         self._dragging = self.paused
 
@@ -517,7 +517,7 @@ class PetApp:
         nx = max(0, min(self.screen_w - w, event.x_root - self._win_offset[0]))
         ny = max(0, min(self.screen_h - h, event.y_root - self._win_offset[1]))
         self.pos[0], self.pos[1] = float(nx), float(ny)
-        self.root.geometry(f"{w}x{h}+{int(nx)}+{int(ny)}")
+        self.pet_window.geometry(f"{w}x{h}+{int(nx)}+{int(ny)}")
 
     def _on_drag_end(self, event):
         moved = math.hypot(event.x_root - self._press_x,
@@ -528,8 +528,8 @@ class PetApp:
 
     def _on_configure(self, event):
         if self.paused and self._dragging:
-            self.pos[0] = float(self.root.winfo_x())
-            self.pos[1] = float(self.root.winfo_y())
+            self.pos[0] = float(self.pet_window.winfo_x())
+            self.pos[1] = float(self.pet_window.winfo_y())
 
     # ---------- 托盘 ----------
     def _setup_tray(self):
@@ -740,7 +740,7 @@ class PetApp:
         w, h = self.cur_size
         x = max(0, min(self.screen_w - w, pos[0] + offset[0]))
         y = max(0, min(self.screen_h - h, pos[1] + offset[1]))
-        self.root.geometry(f"{w}x{h}+{int(x)}+{int(y)}")
+        self.pet_window.geometry(f"{w}x{h}+{int(x)}+{int(y)}")
 
     def _clamp(self):
         w, h = self.cur_size
@@ -825,7 +825,8 @@ class PetApp:
         win.resizable(True, True)
         win.minsize(420, 460)
         win.attributes("-topmost", True)
-        win.transient(self.root)
+        if not IS_MAC:
+            win.transient(self.root)
         self.settings_win = win
         self._sliders = {}
 
@@ -935,7 +936,8 @@ class PetApp:
         win.resizable(True, True)
         win.minsize(340, 260)
         win.attributes("-topmost", True)
-        win.transient(self.root)
+        if not IS_MAC:
+            win.transient(self.root)
         self.char_mgr = win
 
         header = tk.Frame(win, bg=BG)
@@ -1077,7 +1079,8 @@ class PetApp:
         dlg.resizable(True, True)
         dlg.minsize(420, 420)
         dlg.attributes("-topmost", True)
-        dlg.transient(self.root)
+        if not IS_MAC:
+            dlg.transient(self.root)
         self.edit_dlg = dlg
         self.edit_name = name
         self.edit_crawl_files = []
@@ -1212,7 +1215,8 @@ class PetApp:
         dlg.resizable(True, True)
         dlg.minsize(420, 400)
         dlg.attributes("-topmost", True)
-        dlg.transient(self.root)
+        if not IS_MAC:
+            dlg.transient(self.root)
         self.add_dlg = dlg
         self.add_crawl_files = []
         self.add_scare_files = []
@@ -1377,6 +1381,8 @@ class PetApp:
                 self.tray.stop()
             except Exception:
                 pass
+        if IS_MAC and hasattr(self, "pet_window"):
+            self.pet_window.destroy()
         if self.root.winfo_exists():
             self.root.destroy()
 
@@ -1394,11 +1400,49 @@ def desktop_selftest():
             try:
                 app.root.after(900, app.root.quit)
                 app.root.mainloop()
+                # Reproduce the reported failure: leave settings open while
+                # the actual desktop pet moves. Dialog geometry must not move.
+                app.open_settings()
+                app.settings_win.geometry("460x600+50+50")
+                app.root.update()
+                settings_before = (app.settings_win.winfo_x(), app.settings_win.winfo_y())
+                app.cfg.update(follow_mouse=False, wobble_amp=0, crawl_speed=80)
+                app.pos = [max(0, min(650, app.screen_w - app.cur_size[0] - 40)), 100.0]
+                app._place(app.pos)
+                pet_before = (app.pet_window.winfo_x(), app.pet_window.winfo_y())
+                app.angle = 0.0
+                app.idle_until = 0.0
+                app.next_think = time.monotonic() + 100
+                app._tick_crawl(time.monotonic(), 0.2)
+                app.root.update()
+                pet_after = (app.pet_window.winfo_x(), app.pet_window.winfo_y())
+                settings_after = (app.settings_win.winfo_x(), app.settings_win.winfo_y())
+                visible = app.pet_window.is_visible() if IS_MAC else bool(app.root.winfo_viewable())
+                render_ok = True
+                report_dir = os.environ.get("SYLAIDESK_SELFTEST_OUTPUT")
+                if IS_MAC and report_dir:
+                    os.makedirs(report_dir, exist_ok=True)
+                    preview = os.path.join(report_dir, "pet-render.png")
+                    app.pet_window.save_preview(preview)
+                    with Image.open(preview) as image:
+                        render_ok = image.convert("RGBA").getchannel("A").getbbox() is not None
                 ok = (app.char_name == DEFAULT_CHARACTER
                       and len(app.crawl_frames) == 2
                       and len(app.scare_frames) == 2
                       and app.tray is not None and app.tray.visible
+                      and visible and render_ok
+                      and pet_after[0] > pet_before[0]
+                      and settings_before == settings_after
                       and not errors)
+                if report_dir:
+                    os.makedirs(report_dir, exist_ok=True)
+                    with open(os.path.join(report_dir, "window-check.json"), "w", encoding="utf-8") as output:
+                        json.dump({"ok": ok, "character": app.char_name,
+                                   "renderer": "Cocoa NSPanel" if IS_MAC else "Tk",
+                                   "pet_visible": visible, "rendered_pixels": render_ok,
+                                   "pet_before": pet_before, "pet_after": pet_after,
+                                   "settings_before": settings_before, "settings_after": settings_after,
+                                   "callback_errors": len(errors)}, output, indent=2)
                 print("SELFTEST %s char=%s crawl=%d scare=%d" %
                       ("OK" if ok else "FAILED", app.char_name,
                        len(app.crawl_frames), len(app.scare_frames)))

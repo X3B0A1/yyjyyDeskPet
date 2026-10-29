@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - "main.py"
+      - "macos_pet.py"
       - "tests/**"
       - "requirements*.txt"
       - "sylai.spec"
@@ -14,6 +15,7 @@ on:
   pull_request:
     paths:
       - "main.py"
+      - "macos_pet.py"
       - "tests/**"
       - "requirements*.txt"
       - "sylai.spec"
@@ -47,13 +49,22 @@ jobs:
         run: python -m PyInstaller --noconfirm --distpath build/dist --workpath build/work sylai.spec
       - name: Test packaged Mac app with fresh tjm data
         if: runner.os == 'macOS'
+        env:
+          SYLAIDESK_SELFTEST_OUTPUT: build/mac-selftest
         run: '"build/dist/美洲狮来了.app/Contents/MacOS/美洲狮来了" --selftest'
+      - name: Save native window verification
+        if: always() && runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SylaiDesk-tjm-v1.2.1-check-macOS-${{ runner.arch }}
+          path: build/mac-selftest/
+          if-no-files-found: ignore
       - name: Archive macOS app with executable permissions
         if: runner.os == 'macOS'
-        run: ditto -c -k --sequesterRsrc --keepParent "build/dist/美洲狮来了.app" "build/dist/SylaiDesk-tjm-macOS-${{ runner.arch }}.zip"
+        run: ditto -c -k --sequesterRsrc --keepParent "build/dist/美洲狮来了.app" "build/dist/SylaiDesk-tjm-v1.2.1-macOS-${{ runner.arch }}.zip"
       - uses: actions/upload-artifact@v4
         with:
-          name: SylaiDesk-tjm-${{ runner.os }}-${{ runner.arch }}
+          name: SylaiDesk-tjm-v1.2.1-${{ runner.os }}-${{ runner.arch }}
           path: |
             build/dist/*.exe
             build/dist/*.zip

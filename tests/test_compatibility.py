@@ -34,13 +34,15 @@ class PlatformTests(unittest.TestCase):
                 patch.object(main, "base_dir", return_value="portable"):
             self.assertEqual(main.data_dir(), "portable")
 
-    def test_mac_window_does_not_use_windows_attributes(self):
-        root = Mock()
-        with patch.object(main, "IS_MAC", True):
-            self.assertEqual(main.configure_pet_window(root), "systemTransparent")
-        attrs = dict(call.args for call in root.attributes.call_args_list)
-        self.assertEqual(attrs, {"-topmost": True, "-transparent": True})
-        root.configure.assert_called_once_with(bg="systemTransparent")
+    def test_movement_targets_pet_window_instead_of_dialog_controller(self):
+        app = main.PetApp.__new__(main.PetApp)
+        app.root = Mock()
+        app.pet_window = Mock()
+        app.cur_size = (100, 120)
+        app.screen_w, app.screen_h = 1920, 1080
+        app._place([80, 90])
+        app.pet_window.geometry.assert_called_once_with("100x120+80+90")
+        app.root.geometry.assert_not_called()
 
     def test_windows_keeps_color_key_and_tool_window(self):
         root = Mock()
@@ -59,10 +61,14 @@ class PlatformTests(unittest.TestCase):
                 app.scaled = {"c0": image}
                 app.frame_photos = {}
                 app.label = Mock()
+                app.pet_window = Mock()
                 with patch.object(main, "IS_MAC", is_mac), \
                         patch.object(main.ImageTk, "PhotoImage") as photo:
                     main.PetApp._set_frame(app, "c0", mirrored=True)
-                    rendered = photo.call_args.args[0]
+                    factory = app.pet_window.make_photo if is_mac else photo
+                    rendered = factory.call_args.args[0]
+                    if is_mac:
+                        photo.assert_not_called()
                 self.assertEqual(rendered.mode, "RGBA" if is_mac else "RGB")
                 self.assertEqual(rendered.getpixel((0, 0))[:3], (255, 0, 0))
                 self.assertEqual(rendered.getpixel((1, 0)),
@@ -215,6 +221,7 @@ class CharacterTests(unittest.TestCase):
                 Image.new("RGBA", (8, 8)).save(target / name)
             app = main.PetApp.__new__(main.PetApp)
             app.label = Mock()
+            app.pet_window = Mock()
             app.cur_key = ("s9", True)
             app.face_mirror = True
             app.state = "scare"
@@ -230,6 +237,7 @@ class CharacterTests(unittest.TestCase):
         app.root = Mock()
         app.root.winfo_x.return_value = 100
         app.root.winfo_y.return_value = 100
+        app.pet_window = app.root
         app.paused = False
         app.cur_size = (20, 20)
         app.screen_w, app.screen_h = 1920, 1080
